@@ -1,3 +1,4 @@
 .env
 output.json
 trial_decisions_output.json
+/env
