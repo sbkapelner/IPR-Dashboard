@@ -1,0 +1,7 @@
+  - trial_decision_id
+  - appeal_number
+  - trial_number
+  - decision_issue_date
+  - trial_outcome_category
+  - last_modified_datetime
+  - raw_json

@@ -1,0 +1,23 @@
+  - trial_number — text
+  - last_modified_datetime — timestamp without time zone
+  - patent_owner_patent_number — text
+  - patent_owner_real_party_in_interest_name — text
+  - patent_owner_counsel_name — text
+  - patent_owner_grant_date — date
+  - patent_owner_technology_center_number — text
+  - patent_owner_group_art_unit_number — text
+  - patent_owner_application_number_text — text
+  - patent_owner_inventor_name — text
+  - trial_meta_accorded_filing_date — date
+  - trial_meta_termination_date — date
+  - trial_meta_trial_type_code — text
+  - trial_meta_latest_decision_date — date
+  - trial_meta_file_download_uri — text
+  - trial_meta_institution_decision_date — date
+  - trial_meta_trial_status_category — text
+  - trial_meta_trial_last_modified_date — date
+  - trial_meta_petition_filing_date — date
+  - trial_meta_trial_last_modified_datetime — timestamp without time zone
+  - regular_petitioner_real_party_in_interest_name — text
+  - regular_petitioner_counsel_name — text
+  - raw_json — jsonb
