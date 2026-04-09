@@ -26,17 +26,25 @@ def load_dotenv(path=".env"):
 
 def get_connection():
     required_vars = ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"]
-    missing = [name for name in required_vars if not os.environ.get(name)]
+    missing = [
+        name for name in required_vars
+        if not os.environ.get(name) and name not in st.secrets
+    ]
     if missing:
         missing_list = ", ".join(missing)
         raise ValueError(f"Set PostgreSQL env vars in .env before running: {missing_list}")
 
+    def get_setting(name):
+        if name in st.secrets:
+            return st.secrets[name]
+        return os.environ[name]
+
     return psycopg.connect(
-        host=os.environ["PGHOST"],
-        port=os.environ["PGPORT"],
-        dbname=os.environ["PGDATABASE"],
-        user=os.environ["PGUSER"],
-        password=os.environ["PGPASSWORD"],
+        host=get_setting("PGHOST"),
+        port=get_setting("PGPORT"),
+        dbname=get_setting("PGDATABASE"),
+        user=get_setting("PGUSER"),
+        password=get_setting("PGPASSWORD"),
     )
 
 
