@@ -8,9 +8,46 @@ import psycopg
 import streamlit as st
 
 TECH_CENTER_ORDER = [1600, 1700, 2100, 2400, 2600, 2800, 2900, 3600, 3700, 3900]
-AGE_BUCKET_STARTS = [0, 4, 8, 12, 16, 20]
+AGE_BUCKET_STARTS = [0, 3, 6, 9, 12, 15, 18, 20]
+AGE_BUCKET_LABELS = ["0-3 years", "3-6 years", "6-9 years", "9-12 years", "12-15 years", "15-18 years", "18-20 years", "20+ years"]
 INSTITUTION_FY_FLOOR = 2022
 INSTITUTION_DATE_FLOOR = date(2021, 10, 1)
+
+
+def get_patent_age_bucket_start(value):
+    if value < 3:
+        return 0
+    if value < 6:
+        return 3
+    if value < 9:
+        return 6
+    if value < 12:
+        return 9
+    if value < 15:
+        return 12
+    if value < 18:
+        return 15
+    if value < 20:
+        return 18
+    return 20
+
+
+def get_patent_age_bucket_label(value):
+    if value < 3:
+        return "0-3 years"
+    if value < 6:
+        return "3-6 years"
+    if value < 9:
+        return "6-9 years"
+    if value < 12:
+        return "9-12 years"
+    if value < 15:
+        return "12-15 years"
+    if value < 18:
+        return "15-18 years"
+    if value < 20:
+        return "18-20 years"
+    return "20+ years"
 
 def load_dotenv(path=".env"):
     env_path = Path(path)
@@ -340,6 +377,27 @@ def main():
             st.warning("No discretionary-denial records fall within the selected date range.")
             return
 
+        filtered_trial_lookup = (
+            filtered_df[
+                ["trial_number", "patent_owner_grant_date", "decision_date"]
+            ]
+            .dropna(subset=["trial_number"])
+            .drop_duplicates(subset=["trial_number"])
+        )
+        denied_overlap_df = institution_df[
+            (institution_df["trial_outcome_category"] == "Institution Denied")
+            & (institution_df["decision_issue_date"] >= start_date)
+            & (institution_df["decision_issue_date"] <= end_date)
+        ].copy()
+        denied_overlap_df = denied_overlap_df.dropna(subset=["trial_number"]).drop_duplicates(
+            subset=["trial_number"]
+        )
+        denied_overlap_df = denied_overlap_df.merge(
+            filtered_trial_lookup,
+            on="trial_number",
+            how="inner",
+        )
+
         discretionary_df = filtered_df[
             filtered_df["trial_meta_trial_status_category"] == "Discretionary Denial"
         ].copy()
@@ -359,14 +417,10 @@ def main():
 
         discretionary_df["patent_age_years"] = discretionary_df["patent_age_days"] / 365.25
         discretionary_df["patent_age_bucket_start"] = discretionary_df["patent_age_years"].apply(
-            lambda value: int(value // 4) * 4 if value < 20 else 20
+            get_patent_age_bucket_start
         )
         discretionary_df["patent_age_bucket_label"] = discretionary_df["patent_age_years"].apply(
-            lambda value: (
-                f"{int(value // 4) * 4}-{int(value // 4) * 4 + 4} years"
-                if value < 20
-                else "20+ years"
-            )
+            get_patent_age_bucket_label
         )
 
         left, center, right = st.columns([2, 1, 2])
@@ -381,36 +435,32 @@ def main():
                 unsafe_allow_html=True,
             )
 
-        all_ipr_age_df = filtered_df[
-            filtered_df["patent_owner_grant_date"].notna()
+        denied_age_df = denied_overlap_df[
+            denied_overlap_df["patent_owner_grant_date"].notna()
         ].copy()
-        all_ipr_age_df["patent_owner_grant_date"] = pd.to_datetime(
-            all_ipr_age_df["patent_owner_grant_date"]
+        denied_age_df["patent_owner_grant_date"] = pd.to_datetime(
+            denied_age_df["patent_owner_grant_date"]
         ).dt.date
-        all_ipr_age_df = all_ipr_age_df[
-            all_ipr_age_df["decision_date"] >= all_ipr_age_df["patent_owner_grant_date"]
+        denied_age_df = denied_age_df[
+            denied_age_df["decision_date"] >= denied_age_df["patent_owner_grant_date"]
         ].copy()
-        all_ipr_age_df["patent_age_days"] = (
-            pd.to_datetime(all_ipr_age_df["decision_date"])
-            - pd.to_datetime(all_ipr_age_df["patent_owner_grant_date"])
+        denied_age_df["patent_age_days"] = (
+            pd.to_datetime(denied_age_df["decision_date"])
+            - pd.to_datetime(denied_age_df["patent_owner_grant_date"])
         ).dt.days
-        all_ipr_age_df["patent_age_years"] = all_ipr_age_df["patent_age_days"] / 365.25
-        all_ipr_age_df["patent_age_bucket_start"] = all_ipr_age_df["patent_age_years"].apply(
-            lambda value: int(value // 4) * 4 if value < 20 else 20
+        denied_age_df["patent_age_years"] = denied_age_df["patent_age_days"] / 365.25
+        denied_age_df["patent_age_bucket_start"] = denied_age_df["patent_age_years"].apply(
+            get_patent_age_bucket_start
         )
-        all_ipr_age_df["patent_age_bucket_label"] = all_ipr_age_df["patent_age_years"].apply(
-            lambda value: (
-                f"{int(value // 4) * 4}-{int(value // 4) * 4 + 4} years"
-                if value < 20
-                else "20+ years"
-            )
+        denied_age_df["patent_age_bucket_label"] = denied_age_df["patent_age_years"].apply(
+            get_patent_age_bucket_label
         )
 
-        age_counts = (
-            all_ipr_age_df[all_ipr_age_df["patent_age_bucket_start"].notna()]
+        denied_age_counts = (
+            denied_age_df[denied_age_df["patent_age_bucket_start"].notna()]
             .groupby(["patent_age_bucket_start", "patent_age_bucket_label"], as_index=False)
             .size()
-            .rename(columns={"size": "total_iprs"})
+            .rename(columns={"size": "total_denials"})
         )
         discretionary_age_counts = (
             discretionary_df[discretionary_df["patent_age_bucket_start"].notna()]
@@ -421,40 +471,37 @@ def main():
         full_age_counts = pd.DataFrame(
             {
                 "patent_age_bucket_start": AGE_BUCKET_STARTS,
-                "patent_age_bucket_label": [
-                    *[f"{year}-{year + 4} years" for year in range(0, 20, 4)],
-                    "20+ years",
-                ],
+                "patent_age_bucket_label": AGE_BUCKET_LABELS,
             }
         )
         age_counts = full_age_counts.merge(
-            age_counts,
+            denied_age_counts,
             on=["patent_age_bucket_start", "patent_age_bucket_label"],
             how="left",
         ).merge(
             discretionary_age_counts,
             on=["patent_age_bucket_start", "patent_age_bucket_label"],
             how="left",
-        ).fillna({"total_iprs": 0, "discretionary_denials": 0})
-        age_counts["total_iprs"] = age_counts["total_iprs"].astype(int)
+        ).fillna({"total_denials": 0, "discretionary_denials": 0})
+        age_counts["total_denials"] = age_counts["total_denials"].astype(int)
         age_counts["discretionary_denials"] = age_counts["discretionary_denials"].astype(int)
-        age_counts["denial_rate"] = age_counts.apply(
+        age_counts["discretionary_share_of_denials"] = age_counts.apply(
             lambda row: (
-                row["discretionary_denials"] / row["total_iprs"]
-                if row["total_iprs"] > 0
+                row["discretionary_denials"] / row["total_denials"]
+                if row["total_denials"] > 0
                 else 0
             ),
             axis=1,
         )
         age_counts_long = age_counts.melt(
             id_vars=["patent_age_bucket_start", "patent_age_bucket_label"],
-            value_vars=["total_iprs", "discretionary_denials"],
+            value_vars=["total_denials", "discretionary_denials"],
             var_name="series",
             value_name="count",
         )
         age_counts_long["series"] = age_counts_long["series"].map(
             {
-                "total_iprs": "Total IPRs",
+                "total_denials": "Total Denials",
                 "discretionary_denials": "Discretionary Denials",
             }
         )
@@ -463,7 +510,7 @@ def main():
         with metric_col:
             age_metric = st.segmented_control(
                 "Metric",
-                options=["Counts", "Discretionary Denial Rate"],
+                options=["Counts", "Discretionary Share of Institution Denials"],
                 default="Counts",
                 key="age_metric",
             )
@@ -471,7 +518,7 @@ def main():
             if age_metric == "Counts":
                 age_series = st.segmented_control(
                     "Series",
-                    options=["Total IPRs", "Discretionary Denials", "Both"],
+                    options=["Total Denials", "Discretionary Denials", "Both"],
                     default="Both",
                     key="age_series",
                 )
@@ -493,7 +540,7 @@ def main():
                         "series": "",
                     },
                     color_discrete_map={
-                        "Total IPRs": "#9bb4c7",
+                        "Total Denials": "#9bb4c7",
                         "Discretionary Denials": "#c44e52",
                     },
                 )
@@ -502,7 +549,7 @@ def main():
                 age_fig.update_traces(hovertemplate="%{y}<extra></extra>")
             else:
                 series_map = {
-                    "Total IPRs": ("total_iprs", "#9bb4c7"),
+                    "Total Denials": ("total_denials", "#9bb4c7"),
                     "Discretionary Denials": ("discretionary_denials", "#c44e52"),
                 }
                 value_column, color = series_map[age_series]
@@ -528,11 +575,11 @@ def main():
             age_fig = px.bar(
                 age_counts,
                 x="patent_age_bucket_start",
-                y="denial_rate",
-                title="Discretionary Denial Rate by Patent Age",
+                y="discretionary_share_of_denials",
+                title="Discretionary Share of Institution Denials by Patent Age",
                 labels={
                     "patent_age_bucket_start": "Patent Age",
-                    "denial_rate": "Discretionary Denial Rate",
+                    "discretionary_share_of_denials": "Discretionary Share of Institution Denials",
                 },
             )
             age_fig.update_traces(marker_color="#c44e52")
@@ -540,27 +587,19 @@ def main():
             age_fig.update_layout(
                 bargap=0.05,
                 xaxis_title="Patent Age",
-                yaxis_title="Discretionary Denial Rate",
+                yaxis_title="Discretionary Share of Institution Denials",
             )
         age_fig.update_xaxes(
             tickmode="array",
             tickvals=AGE_BUCKET_STARTS,
-            ticktext=[f"{year}-{year + 4}" for year in range(0, 20, 4)] + ["20+"],
-            range=[-2.5, 22.5],
+            ticktext=["0-3", "3-6", "6-9", "9-12", "12-15", "15-18", "18-20", "20+"],
+            range=[-1.5, 21.5],
         )
-        if age_metric == "Discretionary Denial Rate":
+        if age_metric == "Discretionary Share of Institution Denials":
             age_fig.update_yaxes(tickformat=".0%")
 
         centered_chart(age_fig)
 
-        monthly_ipr_counts = (
-            filtered_df.assign(
-                decision_month=pd.to_datetime(filtered_df["decision_date"]).dt.to_period("M").dt.to_timestamp()
-            )
-            .groupby("decision_month", as_index=False)
-            .size()
-            .rename(columns={"size": "total_iprs"})
-        )
         monthly_dd_counts = (
             discretionary_df.assign(
                 decision_month=pd.to_datetime(discretionary_df["decision_date"]).dt.to_period("M").dt.to_timestamp()
@@ -569,29 +608,38 @@ def main():
             .size()
             .rename(columns={"size": "discretionary_denials"})
         )
-        monthly_counts = monthly_ipr_counts.merge(
-            monthly_dd_counts,
+        monthly_denied_counts = (
+            denied_overlap_df.assign(
+                decision_month=pd.to_datetime(denied_overlap_df["decision_date"]).dt.to_period("M").dt.to_timestamp()
+            )
+            .groupby("decision_month", as_index=False)
+            .size()
+            .rename(columns={"size": "total_denials"})
+        )
+        monthly_counts = monthly_dd_counts.merge(
+            monthly_denied_counts,
             on="decision_month",
-            how="left",
-        ).fillna({"discretionary_denials": 0})
+            how="outer",
+        ).fillna({"discretionary_denials": 0, "total_denials": 0})
         monthly_counts["discretionary_denials"] = monthly_counts["discretionary_denials"].astype(int)
-        monthly_counts["denial_rate"] = monthly_counts.apply(
+        monthly_counts["total_denials"] = monthly_counts["total_denials"].astype(int)
+        monthly_counts["discretionary_share_of_denials"] = monthly_counts.apply(
             lambda row: (
-                row["discretionary_denials"] / row["total_iprs"]
-                if row["total_iprs"] > 0
+                row["discretionary_denials"] / row["total_denials"]
+                if row["total_denials"] > 0
                 else 0
             ),
             axis=1,
         )
         monthly_counts_long = monthly_counts.melt(
             id_vars=["decision_month"],
-            value_vars=["total_iprs", "discretionary_denials"],
+            value_vars=["total_denials", "discretionary_denials"],
             var_name="series",
             value_name="count",
         )
         monthly_counts_long["series"] = monthly_counts_long["series"].map(
             {
-                "total_iprs": "Total IPRs",
+                "total_denials": "Total Denials",
                 "discretionary_denials": "Discretionary Denials",
             }
         )
@@ -600,7 +648,7 @@ def main():
         with month_metric_col:
             month_metric = st.segmented_control(
                 "Metric",
-                options=["Counts", "Discretionary Denial Rate"],
+                options=["Counts", "Discretionary Share of Institution Denials"],
                 default="Counts",
                 key="month_metric",
             )
@@ -608,7 +656,7 @@ def main():
             if month_metric == "Counts":
                 month_series = st.segmented_control(
                     "Series",
-                    options=["Total IPRs", "Discretionary Denials", "Both"],
+                    options=["Total Denials", "Discretionary Denials", "Both"],
                     default="Both",
                     key="month_series",
                 )
@@ -629,7 +677,7 @@ def main():
                         "series": "",
                     },
                     color_discrete_map={
-                        "Total IPRs": "#9bb4c7",
+                        "Total Denials": "#9bb4c7",
                         "Discretionary Denials": "#c44e52",
                     },
                 )
@@ -638,7 +686,7 @@ def main():
                 month_fig.update_traces(hovertemplate="%{y}<extra></extra>")
             else:
                 month_series_map = {
-                    "Total IPRs": ("total_iprs", "#9bb4c7"),
+                    "Total Denials": ("total_denials", "#9bb4c7"),
                     "Discretionary Denials": ("discretionary_denials", "#c44e52"),
                 }
                 value_column, color = month_series_map[month_series]
@@ -664,11 +712,11 @@ def main():
             month_fig = px.bar(
                 monthly_counts,
                 x="decision_month",
-                y="denial_rate",
-                title="Discretionary Denial Rate by Month",
+                y="discretionary_share_of_denials",
+                title="Discretionary Share of Institution Denials by Month",
                 labels={
                     "decision_month": "Month",
-                    "denial_rate": "Discretionary Denial Rate",
+                    "discretionary_share_of_denials": "Discretionary Share of Institution Denials",
                 },
             )
             month_fig.update_traces(marker_color="#c44e52")
@@ -676,7 +724,7 @@ def main():
             month_fig.update_layout(
                 bargap=0.05,
                 xaxis_title="Month",
-                yaxis_title="Discretionary Denial Rate",
+                yaxis_title="Discretionary Share of Institution Denials",
             )
             month_fig.update_yaxes(tickformat=".0%")
 
