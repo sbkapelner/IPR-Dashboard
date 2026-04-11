@@ -12,6 +12,12 @@ AGE_BUCKET_STARTS = [0, 3, 6, 9, 12, 15, 18, 20]
 AGE_BUCKET_LABELS = ["0-3 years", "3-6 years", "6-9 years", "9-12 years", "12-15 years", "15-18 years", "18-20 years", "20+ years"]
 INSTITUTION_FY_FLOOR = 2022
 INSTITUTION_DATE_FLOOR = date(2021, 10, 1)
+AGE_TOTAL_COLOR = "#3b82a0"
+AGE_DD_COLOR = "#d97706"
+MONTH_TOTAL_COLOR = "#2f855a"
+MONTH_DD_COLOR = "#dd6b20"
+TECH_TOTAL_COLOR = "#6b46c1"
+TECH_DD_COLOR = "#d53f8c"
 
 
 def get_patent_age_bucket_start(value):
@@ -379,7 +385,12 @@ def main():
 
         filtered_trial_lookup = (
             filtered_df[
-                ["trial_number", "patent_owner_grant_date", "decision_date"]
+                [
+                    "trial_number",
+                    "patent_owner_grant_date",
+                    "decision_date",
+                    "patent_owner_technology_center_number",
+                ]
             ]
             .dropna(subset=["trial_number"])
             .drop_duplicates(subset=["trial_number"])
@@ -540,8 +551,8 @@ def main():
                         "series": "",
                     },
                     color_discrete_map={
-                        "Total Denials": "#9bb4c7",
-                        "Discretionary Denials": "#c44e52",
+                        "Total Denials": AGE_TOTAL_COLOR,
+                        "Discretionary Denials": AGE_DD_COLOR,
                     },
                 )
                 age_fig.update_layout(barmode="overlay")
@@ -549,8 +560,8 @@ def main():
                 age_fig.update_traces(hovertemplate="%{y}<extra></extra>")
             else:
                 series_map = {
-                    "Total Denials": ("total_denials", "#9bb4c7"),
-                    "Discretionary Denials": ("discretionary_denials", "#c44e52"),
+                    "Total Denials": ("total_denials", AGE_TOTAL_COLOR),
+                    "Discretionary Denials": ("discretionary_denials", AGE_DD_COLOR),
                 }
                 value_column, color = series_map[age_series]
                 age_fig = px.bar(
@@ -582,7 +593,7 @@ def main():
                     "discretionary_share_of_denials": "Discretionary Share of Institution Denials",
                 },
             )
-            age_fig.update_traces(marker_color="#c44e52")
+            age_fig.update_traces(marker_color=AGE_DD_COLOR)
             age_fig.update_traces(hovertemplate="%{y:.0%}<extra></extra>")
             age_fig.update_layout(
                 bargap=0.05,
@@ -677,8 +688,8 @@ def main():
                         "series": "",
                     },
                     color_discrete_map={
-                        "Total Denials": "#9bb4c7",
-                        "Discretionary Denials": "#c44e52",
+                        "Total Denials": MONTH_TOTAL_COLOR,
+                        "Discretionary Denials": MONTH_DD_COLOR,
                     },
                 )
                 month_fig.update_layout(barmode="overlay")
@@ -686,8 +697,8 @@ def main():
                 month_fig.update_traces(hovertemplate="%{y}<extra></extra>")
             else:
                 month_series_map = {
-                    "Total Denials": ("total_denials", "#9bb4c7"),
-                    "Discretionary Denials": ("discretionary_denials", "#c44e52"),
+                    "Total Denials": ("total_denials", MONTH_TOTAL_COLOR),
+                    "Discretionary Denials": ("discretionary_denials", MONTH_DD_COLOR),
                 }
                 value_column, color = month_series_map[month_series]
                 month_fig = px.bar(
@@ -719,7 +730,7 @@ def main():
                     "discretionary_share_of_denials": "Discretionary Share of Institution Denials",
                 },
             )
-            month_fig.update_traces(marker_color="#c44e52")
+            month_fig.update_traces(marker_color=MONTH_DD_COLOR)
             month_fig.update_traces(hovertemplate="%{y:.0%}<extra></extra>")
             month_fig.update_layout(
                 bargap=0.05,
@@ -736,17 +747,50 @@ def main():
         if not tech_center_df.empty:
             tech_center_counts = (
                 tech_center_df.assign(
+                    patent_owner_technology_center_number=lambda data: pd.to_numeric(
+                        data["patent_owner_technology_center_number"],
+                        errors="coerce",
+                    )
+                )
+                .dropna(subset=["patent_owner_technology_center_number"])
+                .assign(
                     patent_owner_technology_center_number=lambda data: data[
                         "patent_owner_technology_center_number"
                     ].astype(int)
                 )
                 .groupby("patent_owner_technology_center_number", as_index=False)
                 .size()
-                .rename(columns={"size": "proceedings"})
+                .rename(columns={"size": "discretionary_denials"})
+            )
+            total_denial_tech_center_counts = (
+                denied_overlap_df[
+                    denied_overlap_df["patent_owner_technology_center_number"].notna()
+                ]
+                .assign(
+                    patent_owner_technology_center_number=lambda data: pd.to_numeric(
+                        data["patent_owner_technology_center_number"],
+                        errors="coerce",
+                    )
+                )
+                .dropna(subset=["patent_owner_technology_center_number"])
+                .assign(
+                    patent_owner_technology_center_number=lambda data: data[
+                        "patent_owner_technology_center_number"
+                    ].astype(int)
+                )
+                .groupby("patent_owner_technology_center_number", as_index=False)
+                .size()
+                .rename(columns={"size": "total_denials"})
             )
             tech_center_counts = tech_center_counts.set_index(
                 "patent_owner_technology_center_number"
             ).reindex(TECH_CENTER_ORDER, fill_value=0).reset_index()
+            tech_center_counts = tech_center_counts.merge(
+                total_denial_tech_center_counts,
+                on="patent_owner_technology_center_number",
+                how="left",
+            ).fillna({"total_denials": 0})
+            tech_center_counts["total_denials"] = tech_center_counts["total_denials"].astype(int)
             tech_center_counts["technology_center_label"] = tech_center_counts[
                 "patent_owner_technology_center_number"
             ].astype(str)
@@ -758,23 +802,70 @@ def main():
                 key="tech_center_view",
             )
             if tech_center_view == "Bar":
-                tech_center_fig = px.bar(
-                    tech_center_counts,
-                    x="technology_center_label",
-                    y="proceedings",
-                    title="Discretionary Denials by Technology Center Number",
-                    labels={
-                        "technology_center_label": "Technology Center Number",
-                        "proceedings": "Discretionary Denials",
-                    },
-                    category_orders={
-                        "technology_center_label": [str(value) for value in TECH_CENTER_ORDER]
-                    },
+                tech_center_series = st.segmented_control(
+                    "Series",
+                    options=["Total Denials", "Discretionary Denials", "Both"],
+                    default="Both",
+                    key="tech_center_series",
                 )
+                if tech_center_series == "Both":
+                    tech_center_plot_df = tech_center_counts.melt(
+                        id_vars=["technology_center_label"],
+                        value_vars=["total_denials", "discretionary_denials"],
+                        var_name="series",
+                        value_name="count",
+                    )
+                    tech_center_plot_df["series"] = tech_center_plot_df["series"].map(
+                        {
+                            "total_denials": "Total Denials",
+                            "discretionary_denials": "Discretionary Denials",
+                        }
+                    )
+                    tech_center_fig = px.bar(
+                        tech_center_plot_df,
+                        x="technology_center_label",
+                        y="count",
+                        color="series",
+                        title="Denials by Technology Center Number",
+                        labels={
+                            "technology_center_label": "Technology Center Number",
+                            "count": "Denials",
+                            "series": "",
+                        },
+                        color_discrete_map={
+                            "Total Denials": TECH_TOTAL_COLOR,
+                            "Discretionary Denials": TECH_DD_COLOR,
+                        },
+                        category_orders={
+                            "technology_center_label": [str(value) for value in TECH_CENTER_ORDER]
+                        },
+                    )
+                    tech_center_fig.update_layout(barmode="overlay")
+                    tech_center_fig.update_traces(opacity=0.8)
+                else:
+                    value_column, color = (
+                        ( "total_denials", TECH_TOTAL_COLOR)
+                        if tech_center_series == "Total Denials"
+                        else ("discretionary_denials", TECH_DD_COLOR)
+                    )
+                    tech_center_fig = px.bar(
+                        tech_center_counts,
+                        x="technology_center_label",
+                        y=value_column,
+                        title="Denials by Technology Center Number",
+                        labels={
+                            "technology_center_label": "Technology Center Number",
+                            value_column: "Denials",
+                        },
+                        category_orders={
+                            "technology_center_label": [str(value) for value in TECH_CENTER_ORDER]
+                        },
+                    )
+                    tech_center_fig.update_traces(marker_color=color)
                 tech_center_fig.update_layout(
                     bargap=0.1,
                     xaxis_title="Technology Center Number",
-                    yaxis_title="Discretionary Denials",
+                    yaxis_title="Denials",
                     xaxis=dict(
                         tickmode="array",
                         tickvals=[str(value) for value in TECH_CENTER_ORDER],
@@ -786,7 +877,7 @@ def main():
                 tech_center_fig = px.pie(
                     tech_center_counts,
                     names="technology_center_label",
-                    values="proceedings",
+                    values="discretionary_denials",
                     title="Discretionary Denials by Technology Center Number",
                 )
                 tech_center_fig.update_traces(hovertemplate="%{label}<extra></extra>")
