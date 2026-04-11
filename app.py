@@ -16,8 +16,8 @@ AGE_TOTAL_COLOR = "#3b82a0"
 AGE_DD_COLOR = "#d97706"
 MONTH_TOTAL_COLOR = "#2f855a"
 MONTH_DD_COLOR = "#dd6b20"
-TECH_TOTAL_COLOR = "#6b46c1"
-TECH_DD_COLOR = "#d53f8c"
+TECH_TOTAL_COLOR = "#4b5563"
+TECH_DD_COLOR = "#2f6f4f"
 
 
 def get_patent_age_bucket_start(value):
@@ -436,6 +436,7 @@ def main():
 
         left, center, right = st.columns([2, 1, 2])
         with center:
+            st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
             st.markdown(
                 f"""
                 <div class="total-period-box">
@@ -445,6 +446,7 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
+            st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
 
         denied_age_df = denied_overlap_df[
             denied_overlap_df["patent_owner_grant_date"].notna()
