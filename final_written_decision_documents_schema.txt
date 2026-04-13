@@ -1,0 +1,10 @@
+  - final_written_document_id — text primary key
+  - trial_number — text
+  - document_identifier — text
+  - document_filing_date — date
+  - document_title_text — text
+  - document_type_description_text — text
+  - decision_issue_date — date
+  - institution_decision_date — date
+  - last_modified_datetime — timestamp
+  - raw_json — jsonb

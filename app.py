@@ -123,6 +123,8 @@ def load_histogram_data():
             patent_owner_technology_center_number,
             patent_owner_group_art_unit_number,
             regular_petitioner_real_party_in_interest_name,
+            trial_meta_accorded_filing_date AS accorded_filing_date,
+            trial_meta_latest_decision_date AS latest_decision_date,
             trial_meta_petition_filing_date,
             trial_meta_trial_status_category,
             trial_meta_institution_decision_date AS decision_date
@@ -148,6 +150,65 @@ def load_institution_rate_data():
         WHERE decision_issue_date IS NOT NULL
           AND trial_outcome_category IN ('Institution Denied', 'Institution Granted')
         ORDER BY decision_issue_date DESC, trial_decision_id
+    """
+
+    with get_connection() as conn:
+        return pd.read_sql(query, conn)
+
+
+@st.cache_data(ttl=600)
+def load_final_written_timing_data():
+    query = """
+        SELECT
+            p.trial_number,
+            p.trial_meta_institution_decision_date AS institution_decision_date,
+            fwd.document_filing_date AS final_written_decision_date
+        FROM proceedings p
+        JOIN (
+            SELECT DISTINCT trial_number
+            FROM trial_decisions
+            WHERE trial_outcome_category = 'Institution Granted'
+              AND trial_number IS NOT NULL
+        ) granted
+            ON p.trial_number = granted.trial_number
+        JOIN (
+            SELECT
+                trial_number,
+                MIN(document_filing_date) AS document_filing_date
+            FROM final_written_decision_documents
+            WHERE document_filing_date IS NOT NULL
+              AND document_type_description_text = 'Final Written Decision:  original'
+            GROUP BY trial_number
+        ) fwd
+            ON p.trial_number = fwd.trial_number
+        WHERE p.trial_meta_trial_status_category = 'Final Written Decision'
+          AND p.trial_meta_institution_decision_date IS NOT NULL
+        ORDER BY final_written_decision_date DESC, p.trial_number
+    """
+
+    with get_connection() as conn:
+        return pd.read_sql(query, conn)
+
+
+@st.cache_data(ttl=600)
+def load_discretionary_issue_data():
+    query = """
+        SELECT
+            g.trial_number,
+            p.trial_meta_institution_decision_date AS decision_date,
+            p.patent_owner_patent_number,
+            p.regular_petitioner_real_party_in_interest_name,
+            g.parallel_litigation_314a,
+            g.serial_petitions_314a,
+            g.settled_expectations_314a,
+            g.previous_art_or_arguments_325d,
+            g.estoppel_315e,
+            g.analysis_json
+        FROM discretionary_denials_granular g
+        JOIN proceedings p
+            ON g.trial_number = p.trial_number
+        WHERE p.trial_meta_institution_decision_date IS NOT NULL
+        ORDER BY p.trial_meta_institution_decision_date DESC, g.trial_number
     """
 
     with get_connection() as conn:
@@ -204,9 +265,15 @@ def main():
     try:
         institution_df = load_institution_rate_data()
         df = load_histogram_data()
+        issue_df = load_discretionary_issue_data()
     except Exception as exc:
         st.error(f"Failed to load data: {exc}")
         return
+
+    try:
+        final_written_timing_df = load_final_written_timing_data()
+    except Exception:
+        final_written_timing_df = pd.DataFrame()
 
     if institution_df.empty:
         st.warning("No institution-rate records are available in the appeals table.")
@@ -215,6 +282,11 @@ def main():
     if df.empty:
         st.warning("No IPR records are available.")
         return
+
+    if "accorded_filing_date" in df.columns:
+        df["accorded_filing_date"] = pd.to_datetime(df["accorded_filing_date"]).dt.date
+    if "latest_decision_date" in df.columns:
+        df["latest_decision_date"] = pd.to_datetime(df["latest_decision_date"]).dt.date
 
     institution_df["decision_issue_date"] = pd.to_datetime(
         institution_df["decision_issue_date"]
@@ -231,45 +303,44 @@ def main():
     institution_max_date = institution_df["decision_issue_date"].max()
 
     with st.container(border=True):
-        st.header("Institution Rate")
+        st.header("Institution Rates and Timing")
+        default_institution_start = max(
+            institution_min_date,
+            institution_max_date - timedelta(days=183),
+        )
+        institution_date_col1, institution_date_col2, _ = st.columns([1, 1, 3])
+        with institution_date_col1:
+            institution_start_date = st.date_input(
+                "Start Date",
+                value=default_institution_start,
+                min_value=institution_min_date,
+                max_value=institution_max_date,
+                key="institution_start_date",
+            )
+        with institution_date_col2:
+            institution_end_date = st.date_input(
+                "End Date",
+                value=institution_max_date,
+                min_value=institution_min_date,
+                max_value=institution_max_date,
+                key="institution_end_date",
+            )
+
+        if institution_start_date > institution_end_date:
+            st.warning("Institution Start Date must be on or before Institution End Date.")
+            return
+
         institution_view = st.segmented_control(
             "View",
-            options=["Month", "Year"],
+            options=["Month", "Quarter (Calendar)", "Year (FY)"],
             default="Month",
             key="institution_view",
         )
 
-        if institution_view == "Month":
-            default_institution_start = max(
-                institution_min_date,
-                institution_max_date - timedelta(days=183),
-            )
-            institution_date_col1, institution_date_col2, _ = st.columns([1, 1, 3])
-            with institution_date_col1:
-                institution_start_date = st.date_input(
-                    "Start Date",
-                    value=default_institution_start,
-                    min_value=institution_min_date,
-                    max_value=institution_max_date,
-                )
-            with institution_date_col2:
-                institution_end_date = st.date_input(
-                    "End Date",
-                    value=institution_max_date,
-                    min_value=institution_min_date,
-                    max_value=institution_max_date,
-                )
-
-            if institution_start_date > institution_end_date:
-                st.warning("Institution Start Date must be on or before Institution End Date.")
-                return
-
-            institution_plot_df = institution_df[
-                (institution_df["decision_issue_date"] >= institution_start_date)
-                & (institution_df["decision_issue_date"] <= institution_end_date)
-            ].copy()
-        else:
-            institution_plot_df = institution_df.copy()
+        institution_plot_df = institution_df[
+            (institution_df["decision_issue_date"] >= institution_start_date)
+            & (institution_df["decision_issue_date"] <= institution_end_date)
+        ].copy()
 
         if institution_plot_df.empty:
             st.warning("No institution-rate records fall within the selected date range.")
@@ -281,14 +352,24 @@ def main():
                 "Institution Denied": "Denied",
             }
         )
-        period_column = "decision_month" if institution_view == "Month" else "decision_year"
-        period_label = "Month" if institution_view == "Month" else "Year"
-        period_title = "Institution Outcomes by Month" if institution_view == "Month" else "Institution Outcomes by Year"
         if institution_view == "Month":
+            period_column = "decision_month"
+            period_label = "Month"
+            period_title = "Institution Outcomes by Month"
             institution_plot_df[period_column] = pd.to_datetime(
                 institution_plot_df["decision_issue_date"]
             ).dt.to_period("M").dt.to_timestamp()
+        elif institution_view == "Quarter (Calendar)":
+            period_column = "decision_quarter"
+            period_label = "Quarter"
+            period_title = "Institution Outcomes by Quarter"
+            institution_plot_df[period_column] = pd.to_datetime(
+                institution_plot_df["decision_issue_date"]
+            ).dt.to_period("Q").astype(str)
         else:
+            period_column = "decision_year"
+            period_label = "Year"
+            period_title = "Institution Outcomes by Year"
             institution_plot_df[period_column] = institution_plot_df["institution_fiscal_year"]
 
         institution_period_totals = (
@@ -333,7 +414,7 @@ def main():
             yaxis_title="Petitions",
             xaxis_title=period_label,
         )
-        if institution_view == "Year":
+        if institution_view == "Year (FY)":
             fiscal_years = sorted(institution_status_counts[period_column].unique())
             institution_fig.update_xaxes(
                 tickmode="array",
@@ -341,6 +422,89 @@ def main():
                 ticktext=[f"FY{str(year)[-2:]}" for year in fiscal_years],
             )
         centered_chart(institution_fig)
+
+        timing_view = st.segmented_control(
+            "Timing View",
+            options=["Month", "Quarter (Calendar)", "Year (FY)"],
+            default="Month",
+            key="timing_view",
+        )
+        final_written_df = final_written_timing_df.copy()
+        if not final_written_df.empty:
+            final_written_df["institution_decision_date"] = pd.to_datetime(
+                final_written_df["institution_decision_date"]
+            ).dt.date
+            final_written_df["final_written_decision_date"] = pd.to_datetime(
+                final_written_df["final_written_decision_date"]
+            ).dt.date
+        final_written_df = final_written_df[
+            final_written_df["final_written_decision_date"] >= final_written_df["institution_decision_date"]
+        ].copy()
+        final_written_df = final_written_df[
+            (final_written_df["final_written_decision_date"] >= institution_start_date)
+            & (final_written_df["final_written_decision_date"] <= institution_end_date)
+        ].copy()
+
+        if not final_written_df.empty:
+            final_written_df["time_from_institution_to_final_written_decision_months"] = (
+                (
+                    pd.to_datetime(final_written_df["final_written_decision_date"])
+                    - pd.to_datetime(final_written_df["institution_decision_date"])
+                ).dt.days / 30.44
+            )
+            if timing_view == "Month":
+                timing_period_column = "decision_month"
+                timing_period_label = "Month"
+                timing_title = "Average Time from Institution Decision to Final Written Decision by Month"
+                final_written_df[timing_period_column] = pd.to_datetime(
+                    final_written_df["final_written_decision_date"]
+                ).dt.to_period("M").dt.to_timestamp()
+            elif timing_view == "Quarter (Calendar)":
+                timing_period_column = "decision_quarter"
+                timing_period_label = "Quarter"
+                timing_title = "Average Time from Institution Decision to Final Written Decision by Quarter"
+                final_written_df[timing_period_column] = pd.to_datetime(
+                    final_written_df["final_written_decision_date"]
+                ).dt.to_period("Q").astype(str)
+            else:
+                timing_period_column = "decision_fiscal_year"
+                timing_period_label = "Year"
+                timing_title = "Average Time from Institution Decision to Final Written Decision by Year"
+                final_written_df[timing_period_column] = pd.to_datetime(
+                    final_written_df["final_written_decision_date"]
+                ).dt.year + (
+                    pd.to_datetime(final_written_df["final_written_decision_date"]).dt.month >= 10
+                ).astype(int)
+
+            final_written_periods = (
+                final_written_df.groupby(timing_period_column, as_index=False)["time_from_institution_to_final_written_decision_months"]
+                .mean()
+            )
+            final_written_fig = px.bar(
+                final_written_periods,
+                x=timing_period_column,
+                y="time_from_institution_to_final_written_decision_months",
+                title=timing_title,
+                labels={
+                    timing_period_column: timing_period_label,
+                    "time_from_institution_to_final_written_decision_months": "Average Months",
+                },
+            )
+            final_written_fig.update_traces(marker_color="#33265f")
+            final_written_fig.update_traces(hovertemplate="%{y:.1f}<extra></extra>")
+            final_written_fig.update_layout(
+                bargap=0.05,
+                xaxis_title=timing_period_label,
+                yaxis_title="Average Months",
+            )
+            if timing_view == "Year (FY)":
+                fiscal_years = sorted(final_written_periods[timing_period_column].unique())
+                final_written_fig.update_xaxes(
+                    tickmode="array",
+                    tickvals=fiscal_years,
+                    ticktext=[f"FY{str(year)[-2:]}" for year in fiscal_years],
+                )
+            centered_chart(final_written_fig)
 
     with st.container(border=True):
         st.header("Discretionary Denials")
@@ -742,6 +906,64 @@ def main():
 
         centered_chart(month_fig)
 
+        if not issue_df.empty:
+            issue_plot_df = issue_df.copy()
+            issue_plot_df["decision_date"] = pd.to_datetime(issue_plot_df["decision_date"]).dt.date
+            issue_plot_df = issue_plot_df[
+                (issue_plot_df["decision_date"] >= start_date)
+                & (issue_plot_df["decision_date"] <= end_date)
+            ].copy()
+
+            issue_labels = {
+                "parallel_litigation_314a": "314(a) Parallel Litigation",
+                "serial_petitions_314a": "314(a) Serial Petitions",
+                "settled_expectations_314a": "314(a) Settled Expectations",
+                "previous_art_or_arguments_325d": "325(d)",
+                "estoppel_315e": "315(e)",
+            }
+
+            issue_counts = pd.DataFrame(
+                {
+                    "issue": list(issue_labels.values()),
+                    "count": [
+                        int(issue_plot_df["parallel_litigation_314a"].fillna(False).sum()),
+                        int(issue_plot_df["serial_petitions_314a"].fillna(False).sum()),
+                        int(issue_plot_df["settled_expectations_314a"].fillna(False).sum()),
+                        int(issue_plot_df["previous_art_or_arguments_325d"].fillna(False).sum()),
+                        int(issue_plot_df["estoppel_315e"].fillna(False).sum()),
+                    ],
+                }
+            )
+            issue_color_map = {
+                "314(a) Parallel Litigation": "#8b1e3f",
+                "314(a) Serial Petitions": "#c27c2c",
+                "314(a) Settled Expectations": "#6c8a3a",
+                "325(d)": "#2f6f8f",
+                "315(e)": "#5b4b8a",
+            }
+
+            issue_fig = px.bar(
+                issue_counts,
+                x="count",
+                y="issue",
+                orientation="h",
+                color="issue",
+                title="Issue Breakdown in Discretionary Denial Briefs",
+                labels={
+                    "count": "Discretionary Denials",
+                    "issue": "",
+                },
+                color_discrete_map=issue_color_map,
+            )
+            issue_fig.update_traces(hovertemplate="%{x}<extra></extra>")
+            issue_fig.update_layout(
+                xaxis_title="Discretionary Denials",
+                yaxis_title="",
+                showlegend=False,
+                yaxis=dict(categoryorder="array", categoryarray=list(reversed(list(issue_labels.values())))),
+            )
+            centered_chart(issue_fig)
+
         tech_center_df = discretionary_df[
             discretionary_df["patent_owner_technology_center_number"].notna()
         ].copy()
@@ -886,45 +1108,52 @@ def main():
                 tech_center_fig.update_traces(hovertemplate="%{y}<extra></extra>")
             centered_chart(tech_center_fig)
 
-        repeated_pairs = (
-            filtered_df[
-                (filtered_df["trial_meta_trial_status_category"] == "Discretionary Denial")
-                & filtered_df["regular_petitioner_real_party_in_interest_name"].notna()
-                & filtered_df["patent_owner_patent_number"].notna()
-            ]
-            .groupby(
-                [
-                    "regular_petitioner_real_party_in_interest_name",
-                    "patent_owner_patent_number",
-                ],
-                as_index=False,
+        serial_petition_table = issue_plot_df[
+            issue_plot_df["serial_petitions_314a"].fillna(False)
+        ].copy()
+        if not serial_petition_table.empty:
+            serial_petition_table["petitioner_label"] = serial_petition_table[
+                "regular_petitioner_real_party_in_interest_name"
+            ].fillna("Unknown")
+            serial_petition_table = (
+                serial_petition_table[
+                    serial_petition_table["patent_owner_patent_number"].notna()
+                ]
+                .groupby("patent_owner_patent_number", as_index=False)
+                .agg(
+                    challenge_count=("trial_number", "nunique"),
+                    petitioners=(
+                        "petitioner_label",
+                        lambda values: ", ".join(sorted(set(values))),
+                    ),
+                    trial_numbers=(
+                        "trial_number",
+                        lambda values: ", ".join(sorted(set(values))),
+                    ),
+                    latest_decision_date=("decision_date", "max"),
+                )
+                .sort_values(
+                    by=["challenge_count", "latest_decision_date", "patent_owner_patent_number"],
+                    ascending=[False, False, True],
+                )
             )
-            .agg(
-                petition_count=("trial_number", "nunique"),
-                trial_numbers=("trial_number", lambda values: sorted(set(values))),
-            )
-            .query("petition_count > 1")
-            .sort_values(
-                by=[
-                    "petition_count",
-                    "regular_petitioner_real_party_in_interest_name",
-                    "patent_owner_patent_number",
-                ],
-                ascending=[False, True, True],
-            )
-        )
-        if not repeated_pairs.empty:
-            repeated_pairs["trial_numbers"] = repeated_pairs["trial_numbers"].apply(
-                lambda values: ", ".join(values)
-            )
-            st.subheader("Repeated Petitioner / Patent Pairs")
+            st.subheader("Patents Flagged for 314(a) Serial Petitions")
             st.dataframe(
-                repeated_pairs.rename(
+                serial_petition_table[
+                    [
+                        "patent_owner_patent_number",
+                        "challenge_count",
+                        "petitioners",
+                        "trial_numbers",
+                        "latest_decision_date",
+                    ]
+                ].rename(
                     columns={
-                        "regular_petitioner_real_party_in_interest_name": "Petitioner",
                         "patent_owner_patent_number": "Patent Number",
-                        "petition_count": "Petition Count",
+                        "challenge_count": "Challenge Count",
+                        "petitioners": "Petitioners",
                         "trial_numbers": "Trial Numbers",
+                        "latest_decision_date": "Latest Decision Date",
                     }
                 ),
                 use_container_width=True,
