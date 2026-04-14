@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from datetime import date, timedelta
 
@@ -54,6 +55,34 @@ def get_patent_age_bucket_label(value):
     if value < 20:
         return "18-20 years"
     return "20+ years"
+
+
+def normalize_entity_name(value):
+    if pd.isna(value) or value is None:
+        return None
+
+    name = str(value).strip()
+    if not name:
+        return None
+
+    name = re.sub(r"\bet al\.?$", "", name, flags=re.IGNORECASE).strip(" ,.;")
+    name = name.replace(",", " ")
+    name = re.sub(r"\s+", " ", name).strip()
+
+    suffix_pattern = re.compile(
+        r"\b("
+        r"co|company|corp|corporation|inc|incorporated|llc|ltd|limited|lp|llp|plc|gmbh|ag|sa|bv|nv"
+        r")\.?$",
+        flags=re.IGNORECASE,
+    )
+    while True:
+        updated = suffix_pattern.sub("", name).strip(" ,.;")
+        updated = re.sub(r"\s+", " ", updated).strip()
+        if updated == name:
+            break
+        name = updated
+
+    return name or None
 
 def load_dotenv(path=".env"):
     env_path = Path(path)
@@ -197,7 +226,9 @@ def load_discretionary_issue_data():
             g.trial_number,
             p.trial_meta_institution_decision_date AS decision_date,
             p.patent_owner_patent_number,
+            p.patent_owner_real_party_in_interest_name,
             p.regular_petitioner_real_party_in_interest_name,
+            pf.family_id,
             g.parallel_litigation_314a,
             g.serial_petitions_314a,
             g.settled_expectations_314a,
@@ -207,8 +238,32 @@ def load_discretionary_issue_data():
         FROM discretionary_denials_granular g
         JOIN proceedings p
             ON g.trial_number = p.trial_number
+        LEFT JOIN patent_family_ids pf
+            ON p.patent_owner_patent_number = pf.patent_number
         WHERE p.trial_meta_institution_decision_date IS NOT NULL
         ORDER BY p.trial_meta_institution_decision_date DESC, g.trial_number
+    """
+
+    with get_connection() as conn:
+        return pd.read_sql(query, conn)
+
+
+@st.cache_data(ttl=600)
+def load_discretionary_family_data():
+    query = """
+        SELECT
+            p.trial_number,
+            p.trial_meta_institution_decision_date AS decision_date,
+            p.patent_owner_patent_number,
+            p.patent_owner_real_party_in_interest_name,
+            p.regular_petitioner_real_party_in_interest_name,
+            pf.family_id
+        FROM proceedings p
+        LEFT JOIN patent_family_ids pf
+            ON p.patent_owner_patent_number = pf.patent_number
+        WHERE p.trial_meta_trial_status_category = 'Discretionary Denial'
+          AND p.trial_meta_institution_decision_date IS NOT NULL
+        ORDER BY p.trial_meta_institution_decision_date DESC, p.trial_number
     """
 
     with get_connection() as conn:
@@ -266,6 +321,7 @@ def main():
         institution_df = load_institution_rate_data()
         df = load_histogram_data()
         issue_df = load_discretionary_issue_data()
+        family_df = load_discretionary_family_data()
     except Exception as exc:
         st.error(f"Failed to load data: {exc}")
         return
@@ -330,6 +386,10 @@ def main():
             st.warning("Institution Start Date must be on or before Institution End Date.")
             return
 
+        institution_period_label = (
+            f"{institution_start_date.isoformat()} to {institution_end_date.isoformat()}"
+        )
+
         institution_view = st.segmented_control(
             "View",
             options=["Month", "Quarter (Calendar)", "Year (FY)"],
@@ -355,21 +415,21 @@ def main():
         if institution_view == "Month":
             period_column = "decision_month"
             period_label = "Month"
-            period_title = "Institution Outcomes by Month"
+            period_title = f"Institution Outcomes by Month ({institution_period_label})"
             institution_plot_df[period_column] = pd.to_datetime(
                 institution_plot_df["decision_issue_date"]
             ).dt.to_period("M").dt.to_timestamp()
         elif institution_view == "Quarter (Calendar)":
             period_column = "decision_quarter"
             period_label = "Quarter"
-            period_title = "Institution Outcomes by Quarter"
+            period_title = f"Institution Outcomes by Quarter ({institution_period_label})"
             institution_plot_df[period_column] = pd.to_datetime(
                 institution_plot_df["decision_issue_date"]
             ).dt.to_period("Q").astype(str)
         else:
             period_column = "decision_year"
             period_label = "Year"
-            period_title = "Institution Outcomes by Year"
+            period_title = f"Institution Outcomes by Year ({institution_period_label})"
             institution_plot_df[period_column] = institution_plot_df["institution_fiscal_year"]
 
         institution_period_totals = (
@@ -455,21 +515,30 @@ def main():
             if timing_view == "Month":
                 timing_period_column = "decision_month"
                 timing_period_label = "Month"
-                timing_title = "Average Time from Institution Decision to Final Written Decision by Month"
+                timing_title = (
+                    f"Average Time from Institution Decision to Final Written Decision by Month "
+                    f"({institution_period_label})"
+                )
                 final_written_df[timing_period_column] = pd.to_datetime(
                     final_written_df["final_written_decision_date"]
                 ).dt.to_period("M").dt.to_timestamp()
             elif timing_view == "Quarter (Calendar)":
                 timing_period_column = "decision_quarter"
                 timing_period_label = "Quarter"
-                timing_title = "Average Time from Institution Decision to Final Written Decision by Quarter"
+                timing_title = (
+                    f"Average Time from Institution Decision to Final Written Decision by Quarter "
+                    f"({institution_period_label})"
+                )
                 final_written_df[timing_period_column] = pd.to_datetime(
                     final_written_df["final_written_decision_date"]
                 ).dt.to_period("Q").astype(str)
             else:
                 timing_period_column = "decision_fiscal_year"
                 timing_period_label = "Year"
-                timing_title = "Average Time from Institution Decision to Final Written Decision by Year"
+                timing_title = (
+                    f"Average Time from Institution Decision to Final Written Decision by Year "
+                    f"({institution_period_label})"
+                )
                 final_written_df[timing_period_column] = pd.to_datetime(
                     final_written_df["final_written_decision_date"]
                 ).dt.year + (
@@ -539,6 +608,8 @@ def main():
             st.warning("Start Date must be on or before End Date.")
             return
 
+        discretionary_period_label = f"{start_date.isoformat()} to {end_date.isoformat()}"
+
         filtered_df = df[
             (df["decision_date"] >= start_date) & (df["decision_date"] <= end_date)
         ].copy()
@@ -576,6 +647,7 @@ def main():
         discretionary_df = filtered_df[
             filtered_df["trial_meta_trial_status_category"] == "Discretionary Denial"
         ].copy()
+        total_per_period_count = len(discretionary_df)
         discretionary_df = discretionary_df[
             discretionary_df["patent_owner_grant_date"].notna()
         ].copy()
@@ -605,7 +677,7 @@ def main():
                 f"""
                 <div class="total-period-box">
                     <div class="total-period-label">Total Per Period</div>
-                    <div class="total-period-value">{len(discretionary_df):,}</div>
+                    <div class="total-period-value">{total_per_period_count:,}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -710,7 +782,7 @@ def main():
                     x="patent_age_bucket_start",
                     y="count",
                     color="series",
-                    title="Age of Patents at Decision",
+                    title=f"Age of Patents at Decision ({discretionary_period_label})",
                     labels={
                         "patent_age_bucket_start": "Patent Age",
                         "count": "Count",
@@ -734,7 +806,7 @@ def main():
                     age_counts,
                     x="patent_age_bucket_start",
                     y=value_column,
-                    title="Age of Patents at Decision",
+                    title=f"Age of Patents at Decision ({discretionary_period_label})",
                     labels={
                         "patent_age_bucket_start": "Patent Age",
                         value_column: "Count",
@@ -753,7 +825,7 @@ def main():
                 age_counts,
                 x="patent_age_bucket_start",
                 y="denial_rate",
-                title="Discretionary Denial Rate by Patent Age",
+                title=f"Discretionary Denial Rate by Patent Age ({discretionary_period_label})",
                 labels={
                     "patent_age_bucket_start": "Patent Age",
                     "denial_rate": "Discretionary Denial Rate",
@@ -846,7 +918,7 @@ def main():
                     x="decision_month",
                     y="count",
                     color="series",
-                    title="Discretionary Denials by Month",
+                    title=f"Discretionary Denials by Month ({discretionary_period_label})",
                     labels={
                         "decision_month": "Month",
                         "count": "Count",
@@ -870,7 +942,7 @@ def main():
                     monthly_counts,
                     x="decision_month",
                     y=value_column,
-                    title="Discretionary Denials by Month",
+                    title=f"Discretionary Denials by Month ({discretionary_period_label})",
                     labels={
                         "decision_month": "Month",
                         value_column: "Count",
@@ -889,7 +961,7 @@ def main():
                 monthly_counts,
                 x="decision_month",
                 y="denial_rate",
-                title="Discretionary Denial Rate by Month",
+                title=f"Discretionary Denial Rate by Month ({discretionary_period_label})",
                 labels={
                     "decision_month": "Month",
                     "denial_rate": "Discretionary Denial Rate",
@@ -934,6 +1006,10 @@ def main():
                     ],
                 }
             )
+            total_issue_briefs = len(issue_plot_df)
+            issue_counts["percentage"] = issue_counts["count"].apply(
+                lambda value: (value / total_issue_briefs) if total_issue_briefs else 0
+            )
             issue_color_map = {
                 "314(a) Parallel Litigation": "#8b1e3f",
                 "314(a) Serial Petitions": "#c27c2c",
@@ -944,24 +1020,25 @@ def main():
 
             issue_fig = px.bar(
                 issue_counts,
-                x="count",
+                x="percentage",
                 y="issue",
                 orientation="h",
                 color="issue",
-                title="Issue Breakdown in Discretionary Denial Briefs",
+                title=f"Issue Breakdown in Discretionary Denial Briefs ({discretionary_period_label})",
                 labels={
-                    "count": "Discretionary Denials",
+                    "percentage": "Percent of Patent Owner Briefs",
                     "issue": "",
                 },
                 color_discrete_map=issue_color_map,
             )
-            issue_fig.update_traces(hovertemplate="%{x}<extra></extra>")
+            issue_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
             issue_fig.update_layout(
-                xaxis_title="Discretionary Denials",
+                xaxis_title="Percent of Patent Owner Briefs",
                 yaxis_title="",
                 showlegend=False,
                 yaxis=dict(categoryorder="array", categoryarray=list(reversed(list(issue_labels.values())))),
             )
+            issue_fig.update_xaxes(tickformat=".0%")
             centered_chart(issue_fig)
 
         tech_center_df = discretionary_df[
@@ -1049,7 +1126,7 @@ def main():
                         x="technology_center_label",
                         y="count",
                         color="series",
-                        title="Proceedings by Technology Center Number",
+                        title=f"Proceedings by Technology Center Number ({discretionary_period_label})",
                         labels={
                             "technology_center_label": "Technology Center Number",
                             "count": "Proceedings",
@@ -1075,7 +1152,7 @@ def main():
                         tech_center_counts,
                         x="technology_center_label",
                         y=value_column,
-                        title="Proceedings by Technology Center Number",
+                        title=f"Proceedings by Technology Center Number ({discretionary_period_label})",
                         labels={
                             "technology_center_label": "Technology Center Number",
                             value_column: "Proceedings",
@@ -1101,31 +1178,48 @@ def main():
                     tech_center_counts,
                     names="technology_center_label",
                     values="discretionary_denials",
-                    title="Discretionary Denials by Technology Center Number",
+                    title=f"Discretionary Denials by Technology Center Number ({discretionary_period_label})",
                 )
                 tech_center_fig.update_traces(hovertemplate="%{label}<extra></extra>")
             if tech_center_view == "Bar":
                 tech_center_fig.update_traces(hovertemplate="%{y}<extra></extra>")
             centered_chart(tech_center_fig)
 
-        serial_petition_table = issue_plot_df[
-            issue_plot_df["serial_petitions_314a"].fillna(False)
-        ].copy()
+        serial_petition_table = family_df.copy()
         if not serial_petition_table.empty:
+            serial_petition_table["decision_date"] = pd.to_datetime(
+                serial_petition_table["decision_date"]
+            ).dt.date
+            serial_petition_table = serial_petition_table[
+                (serial_petition_table["decision_date"] >= start_date)
+                & (serial_petition_table["decision_date"] <= end_date)
+            ].copy()
             serial_petition_table["petitioner_label"] = serial_petition_table[
                 "regular_petitioner_real_party_in_interest_name"
-            ].fillna("Unknown")
+            ].apply(normalize_entity_name).fillna("Unknown")
+            serial_petition_table["patent_owner_label"] = serial_petition_table[
+                "patent_owner_real_party_in_interest_name"
+            ].apply(normalize_entity_name).fillna("Unknown")
+            serial_petition_table["family_group"] = serial_petition_table["family_id"].fillna(
+                serial_petition_table["patent_owner_patent_number"]
+            )
             serial_petition_table = (
                 serial_petition_table[
-                    serial_petition_table["patent_owner_patent_number"].notna()
+                    serial_petition_table["family_group"].notna()
+                    & serial_petition_table["patent_owner_patent_number"].notna()
                 ]
-                .groupby("patent_owner_patent_number", as_index=False)
+                .groupby(["family_group", "petitioner_label"], as_index=False)
                 .agg(
-                    challenge_count=("trial_number", "nunique"),
-                    petitioners=(
-                        "petitioner_label",
+                    family_id=("family_id", "first"),
+                    patents=(
+                        "patent_owner_patent_number",
+                        lambda values: ", ".join(sorted(set(value for value in values if pd.notna(value)))),
+                    ),
+                    patent_owners=(
+                        "patent_owner_label",
                         lambda values: ", ".join(sorted(set(values))),
                     ),
+                    challenge_count=("trial_number", "nunique"),
                     trial_numbers=(
                         "trial_number",
                         lambda values: ", ".join(sorted(set(values))),
@@ -1133,32 +1227,194 @@ def main():
                     latest_decision_date=("decision_date", "max"),
                 )
                 .sort_values(
-                    by=["challenge_count", "latest_decision_date", "patent_owner_patent_number"],
-                    ascending=[False, False, True],
+                    by=["challenge_count", "latest_decision_date", "family_group", "petitioner_label"],
+                    ascending=[False, False, True, True],
                 )
             )
-            st.subheader("Patents Flagged for 314(a) Serial Petitions")
+            top_families = (
+                serial_petition_table.groupby("family_group", as_index=False)
+                .agg(
+                    family_id=("family_id", "first"),
+                    challenge_count=("challenge_count", "sum"),
+                    petitioners=(
+                        "petitioner_label",
+                        lambda values: ", ".join(sorted(set(values))),
+                    ),
+                )
+                .sort_values(
+                    by=["challenge_count", "family_group"],
+                    ascending=[False, True],
+                )
+                .head(10)
+            )
+
+            st.subheader("Serial Petitions by Family")
             st.dataframe(
                 serial_petition_table[
                     [
-                        "patent_owner_patent_number",
+                        "family_id",
+                        "petitioner_label",
+                        "patent_owners",
                         "challenge_count",
-                        "petitioners",
+                        "patents",
                         "trial_numbers",
-                        "latest_decision_date",
                     ]
                 ].rename(
                     columns={
-                        "patent_owner_patent_number": "Patent Number",
+                        "family_id": "Family ID",
+                        "petitioner_label": "Petitioner",
+                        "patent_owners": "Patent Owner/Real Party in Interest",
                         "challenge_count": "Challenge Count",
-                        "petitioners": "Petitioners",
+                        "patents": "Patents",
                         "trial_numbers": "Trial Numbers",
-                        "latest_decision_date": "Latest Decision Date",
                     }
                 ),
                 use_container_width=True,
                 hide_index=True,
             )
+
+            top_patents = (
+                serial_petition_table.assign(
+                    patent_list=lambda data: data["patents"].str.split(", ")
+                )
+                .explode("patent_list")
+            )
+            top_patents = (
+                top_patents[top_patents["patent_list"].notna() & (top_patents["patent_list"] != "")]
+                .groupby("patent_list", as_index=False)
+                .agg(challenge_count=("challenge_count", "sum"))
+                .sort_values(by=["challenge_count", "patent_list"], ascending=[False, True])
+                .head(10)
+            )
+            top_petitioners = (
+                serial_petition_table.groupby("petitioner_label", as_index=False)
+                .agg(challenge_count=("challenge_count", "sum"))
+                .sort_values(by=["challenge_count", "petitioner_label"], ascending=[False, True])
+                .head(10)
+            )
+            top_patent_owners = (
+                serial_petition_table.assign(
+                    patent_owner_list=lambda data: data["patent_owners"].str.split(", ")
+                )
+                .explode("patent_owner_list")
+            )
+            top_patent_owners = (
+                top_patent_owners[
+                    top_patent_owners["patent_owner_list"].notna()
+                    & (top_patent_owners["patent_owner_list"] != "")
+                ]
+                .groupby("patent_owner_list", as_index=False)
+                .agg(challenge_count=("challenge_count", "sum"))
+                .sort_values(
+                    by=["challenge_count", "patent_owner_list"],
+                    ascending=[False, True],
+                )
+                .head(10)
+            )
+
+            family_chart_col, patent_chart_col = st.columns(2)
+            with family_chart_col:
+                top_families = top_families.copy()
+                top_families["family_id_label"] = top_families["family_id"].fillna("Unknown").astype(str)
+                top_families_fig = px.bar(
+                    top_families,
+                    x="challenge_count",
+                    y="family_id_label",
+                    orientation="h",
+                    title=f"Top 10 Most Challenged Patent Families ({discretionary_period_label})",
+                    labels={
+                        "challenge_count": "Challenge Count",
+                        "family_id_label": "Family ID",
+                    },
+                )
+                top_families_fig.update_traces(marker_color="#7c3f8c")
+                top_families_fig.update_traces(hovertemplate="%{x}<extra></extra>")
+                top_families_fig.update_layout(
+                    xaxis_title="Challenge Count",
+                    yaxis_title="Family ID",
+                    yaxis=dict(
+                        type="category",
+                        categoryorder="array",
+                        categoryarray=top_families["family_id_label"].tolist()[::-1],
+                    ),
+                )
+                st.plotly_chart(top_families_fig, use_container_width=True)
+
+            with patent_chart_col:
+                top_patents_fig = px.bar(
+                    top_patents,
+                    x="challenge_count",
+                    y="patent_list",
+                    orientation="h",
+                    title=f"Top 10 Most Challenged Patents ({discretionary_period_label})",
+                    labels={
+                        "challenge_count": "Challenge Count",
+                        "patent_list": "Patent",
+                    },
+                )
+                top_patents_fig.update_traces(marker_color="#8b5e3c")
+                top_patents_fig.update_traces(hovertemplate="%{x}<extra></extra>")
+                top_patents_fig.update_layout(
+                    xaxis_title="Challenge Count",
+                    yaxis_title="Patent",
+                    yaxis=dict(
+                        type="category",
+                        categoryorder="array",
+                        categoryarray=top_patents["patent_list"].tolist()[::-1],
+                    ),
+                )
+                st.plotly_chart(top_patents_fig, use_container_width=True)
+
+            petitioner_chart_col, owner_chart_col = st.columns(2)
+            with petitioner_chart_col:
+                top_petitioners_fig = px.bar(
+                    top_petitioners,
+                    x="challenge_count",
+                    y="petitioner_label",
+                    orientation="h",
+                    title=f"Top 10 Petitioners ({discretionary_period_label})",
+                    labels={
+                        "challenge_count": "Challenge Count",
+                        "petitioner_label": "Petitioner",
+                    },
+                )
+                top_petitioners_fig.update_traces(marker_color="#6a4c93")
+                top_petitioners_fig.update_traces(hovertemplate="%{x}<extra></extra>")
+                top_petitioners_fig.update_layout(
+                    xaxis_title="Challenge Count",
+                    yaxis_title="Petitioner",
+                    yaxis=dict(
+                        type="category",
+                        categoryorder="array",
+                        categoryarray=top_petitioners["petitioner_label"].tolist()[::-1],
+                    ),
+                )
+                st.plotly_chart(top_petitioners_fig, use_container_width=True)
+
+            with owner_chart_col:
+                top_patent_owners_fig = px.bar(
+                    top_patent_owners,
+                    x="challenge_count",
+                    y="patent_owner_list",
+                    orientation="h",
+                    title=f"Top 10 Patent Owners/Real Party in Interest ({discretionary_period_label})",
+                    labels={
+                        "challenge_count": "Challenge Count",
+                        "patent_owner_list": "Patent Owner/Real Party in Interest",
+                    },
+                )
+                top_patent_owners_fig.update_traces(marker_color="#4f7c5c")
+                top_patent_owners_fig.update_traces(hovertemplate="%{x}<extra></extra>")
+                top_patent_owners_fig.update_layout(
+                    xaxis_title="Challenge Count",
+                    yaxis_title="Patent Owner/Real Party in Interest",
+                    yaxis=dict(
+                        type="category",
+                        categoryorder="array",
+                        categoryarray=top_patent_owners["patent_owner_list"].tolist()[::-1],
+                    ),
+                )
+                st.plotly_chart(top_patent_owners_fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()

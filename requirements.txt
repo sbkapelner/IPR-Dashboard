@@ -3,3 +3,4 @@ pandas
 plotly
 psycopg[binary]
 requests
+google-cloud-bigquery
