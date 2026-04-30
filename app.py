@@ -232,6 +232,7 @@ def load_discretionary_issue_data():
             g.parallel_litigation_314a,
             g.serial_petitions_314a,
             g.settled_expectations_314a,
+            g.conflicting_positions_314a,
             g.previous_art_or_arguments_325d,
             g.estoppel_315e,
             g.analysis_json
@@ -258,6 +259,7 @@ def load_non_discretionary_issue_data():
             a.parallel_litigation_314a,
             a.serial_petitions_314a,
             a.settled_expectations_314a,
+            a.conflicting_positions_314a,
             a.previous_art_or_arguments_325d,
             a.estoppel_315e,
             a.analysis_status
@@ -1030,16 +1032,18 @@ def main():
         centered_chart(month_fig)
 
         issue_labels = {
-            "parallel_litigation_314a": "314(a) Parallel Litigation",
-            "serial_petitions_314a": "314(a) Serial Petitions",
-            "settled_expectations_314a": "314(a) Settled Expectations",
+            "parallel_litigation_314a": "Parallel Litigation",
+            "serial_petitions_314a": "Serial Petitions",
+            "settled_expectations_314a": "Settled Expectations",
+            "conflicting_positions_314a": "Revvo/Tesla",
             "previous_art_or_arguments_325d": "325(d)",
             "estoppel_315e": "315(e)",
         }
         issue_color_map = {
-            "314(a) Parallel Litigation": "#8b1e3f",
-            "314(a) Serial Petitions": "#c27c2c",
-            "314(a) Settled Expectations": "#6c8a3a",
+            "Parallel Litigation": "#8b1e3f",
+            "Serial Petitions": "#c27c2c",
+            "Settled Expectations": "#6c8a3a",
+            "Revvo/Tesla": "#a23b72",
             "325(d)": "#2f6f8f",
             "315(e)": "#5b4b8a",
         }
@@ -1055,6 +1059,7 @@ def main():
                         int(source_df["parallel_litigation_314a"].fillna(False).sum()),
                         int(source_df["serial_petitions_314a"].fillna(False).sum()),
                         int(source_df["settled_expectations_314a"].fillna(False).sum()),
+                        int(source_df["conflicting_positions_314a"].fillna(False).sum()),
                         int(source_df["previous_art_or_arguments_325d"].fillna(False).sum()),
                         int(source_df["estoppel_315e"].fillna(False).sum()),
                     ],

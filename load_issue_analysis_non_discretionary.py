@@ -80,6 +80,7 @@ def ensure_schema(conn):
                 parallel_litigation_314a BOOLEAN,
                 serial_petitions_314a BOOLEAN,
                 settled_expectations_314a BOOLEAN,
+                conflicting_positions_314a BOOLEAN,
                 previous_art_or_arguments_325d BOOLEAN,
                 prior_office_presentation_325d BOOLEAN,
                 material_error_325d BOOLEAN,
@@ -88,6 +89,12 @@ def ensure_schema(conn):
                 analyzed_at TIMESTAMP NOT NULL DEFAULT NOW(),
                 proceedings_last_modified_datetime TIMESTAMP
             )
+            """
+        )
+        cur.execute(
+            f"""
+            ALTER TABLE {TABLE_NAME}
+            ADD COLUMN IF NOT EXISTS conflicting_positions_314a BOOLEAN
             """
         )
     conn.commit()
@@ -159,6 +166,7 @@ def upsert_record(conn, record):
                 parallel_litigation_314a,
                 serial_petitions_314a,
                 settled_expectations_314a,
+                conflicting_positions_314a,
                 previous_art_or_arguments_325d,
                 prior_office_presentation_325d,
                 material_error_325d,
@@ -183,6 +191,7 @@ def upsert_record(conn, record):
                 %(parallel_litigation_314a)s,
                 %(serial_petitions_314a)s,
                 %(settled_expectations_314a)s,
+                %(conflicting_positions_314a)s,
                 %(previous_art_or_arguments_325d)s,
                 %(prior_office_presentation_325d)s,
                 %(material_error_325d)s,
@@ -207,6 +216,7 @@ def upsert_record(conn, record):
                 parallel_litigation_314a = EXCLUDED.parallel_litigation_314a,
                 serial_petitions_314a = EXCLUDED.serial_petitions_314a,
                 settled_expectations_314a = EXCLUDED.settled_expectations_314a,
+                conflicting_positions_314a = EXCLUDED.conflicting_positions_314a,
                 previous_art_or_arguments_325d = EXCLUDED.previous_art_or_arguments_325d,
                 prior_office_presentation_325d = EXCLUDED.prior_office_presentation_325d,
                 material_error_325d = EXCLUDED.material_error_325d,
@@ -493,6 +503,7 @@ Definitions:
 - 314a_parallel_litigation: true only if the brief substantively argues denial because parallel district court or ITC litigation will resolve overlapping issues sooner or more efficiently. Strong indicators include Fintiv, trial timing, stay, overlap of issues/claims/grounds, investment in parallel litigation, or same parties.
 - 314a_serial_petitions: true only if the brief substantively argues repeat, follow-on, coordinated, joined, or multiple PTAB challenges by the same petitioner, real party in interest, privy, or related party against the same patent. Strong indicators include General Plastic, follow-on petitioning, multiple petitions, joinder tactics, or coordinated petitioning. Do not mark this true merely because the brief mentions related petitions or related patents as background facts.
 - 314a_settled_expectations: true only if the brief argues the patent's age, long period in force, reliance interests, investment-backed expectations, or delayed challenge supports denial. Patent age alone is not enough unless tied to a settled-expectations or delayed-challenge argument.
+- 314a_conflicting_positions: true only if the brief substantively argues that the petitioner took conflicting claim-construction or closely related legal positions across forums or proceedings. Strong indicators include Revvo, Tesla, "fast and loose," plain-and-ordinary meaning here but different constructions elsewhere, or indefiniteness in one forum and a definite/plain-meaning position in another.
 - 325d_previous_art_or_arguments: true only if the brief substantively argues that the same or substantially the same prior art or arguments were previously presented to the USPTO during examination, reexamination, reissue, or other Office proceedings, and/or discusses whether the Office made a material error in evaluating them. Strong indicators include Advanced Bionics, Becton Dickinson, material error, same/substantially same art, examiner considered, prosecution history, IDS, or prior Office evaluation. Do NOT count petitioner knowledge, delay, awareness of the patent family, parallel litigation, licensing discussions, or infringement notice as 325(d).
 - 315e_estoppel: true only if the brief substantively relies on statutory estoppel under 35 U.S.C. 315(e) as a reason supporting denial, including that estoppel applies, will apply after a final written decision, should preclude further challenges, or that petitioner is trying to evade estoppel. Do NOT count it if the brief merely says estoppel is narrow, limited, or insufficient.
 
@@ -511,6 +522,7 @@ Return this JSON shape exactly:
   "314a_parallel_litigation": {...},
   "314a_serial_petitions": {...},
   "314a_settled_expectations": {...},
+  "314a_conflicting_positions": {...},
   "325d_previous_art_or_arguments": {...},
   "315e_estoppel": {...},
   "summary": "..."
@@ -643,6 +655,7 @@ def build_status_record(
         "parallel_litigation_314a": None,
         "serial_petitions_314a": None,
         "settled_expectations_314a": None,
+        "conflicting_positions_314a": None,
         "previous_art_or_arguments_325d": None,
         "prior_office_presentation_325d": None,
         "material_error_325d": None,
@@ -680,6 +693,7 @@ def build_analysis_record(
         "parallel_litigation_314a": analysis["314a_parallel_litigation"]["applies"],
         "serial_petitions_314a": analysis["314a_serial_petitions"]["applies"],
         "settled_expectations_314a": analysis["314a_settled_expectations"]["applies"],
+        "conflicting_positions_314a": analysis["314a_conflicting_positions"]["applies"],
         "previous_art_or_arguments_325d": category_325d["applies"],
         "prior_office_presentation_325d": category_325d["prior_office_presentation_discussed"],
         "material_error_325d": category_325d["material_error_discussed"],
