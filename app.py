@@ -233,6 +233,12 @@ def load_discretionary_issue_data():
             g.serial_petitions_314a,
             g.settled_expectations_314a,
             g.conflicting_positions_314a,
+            g.fintiv_factor_1,
+            g.fintiv_factor_2,
+            g.fintiv_factor_3,
+            g.fintiv_factor_4,
+            g.fintiv_factor_5,
+            g.fintiv_factor_6,
             g.previous_art_or_arguments_325d,
             g.estoppel_315e,
             g.analysis_json
@@ -260,6 +266,12 @@ def load_non_discretionary_issue_data():
             a.serial_petitions_314a,
             a.settled_expectations_314a,
             a.conflicting_positions_314a,
+            a.fintiv_factor_1,
+            a.fintiv_factor_2,
+            a.fintiv_factor_3,
+            a.fintiv_factor_4,
+            a.fintiv_factor_5,
+            a.fintiv_factor_6,
             a.previous_art_or_arguments_325d,
             a.estoppel_315e,
             a.analysis_status
@@ -1071,6 +1083,46 @@ def main():
             )
             return counts
 
+        fintiv_labels = {
+            "fintiv_factor_1": "Factor 1",
+            "fintiv_factor_2": "Factor 2",
+            "fintiv_factor_3": "Factor 3",
+            "fintiv_factor_4": "Factor 4",
+            "fintiv_factor_5": "Factor 5",
+            "fintiv_factor_6": "Factor 6",
+        }
+        fintiv_color_map = {
+            "Factor 1": "#7c3f8c",
+            "Factor 2": "#8b1e3f",
+            "Factor 3": "#c27c2c",
+            "Factor 4": "#6c8a3a",
+            "Factor 5": "#2f6f8f",
+            "Factor 6": "#5b4b8a",
+        }
+
+        def build_fintiv_counts(source_df):
+            fintiv_df = source_df[source_df["parallel_litigation_314a"].fillna(False)].copy()
+            if fintiv_df.empty:
+                return pd.DataFrame(columns=["factor", "count", "percentage"])
+            counts = pd.DataFrame(
+                {
+                    "factor": list(fintiv_labels.values()),
+                    "count": [
+                        int(fintiv_df["fintiv_factor_1"].fillna(False).sum()),
+                        int(fintiv_df["fintiv_factor_2"].fillna(False).sum()),
+                        int(fintiv_df["fintiv_factor_3"].fillna(False).sum()),
+                        int(fintiv_df["fintiv_factor_4"].fillna(False).sum()),
+                        int(fintiv_df["fintiv_factor_5"].fillna(False).sum()),
+                        int(fintiv_df["fintiv_factor_6"].fillna(False).sum()),
+                    ],
+                }
+            )
+            denominator = len(fintiv_df)
+            counts["percentage"] = counts["count"].apply(
+                lambda value: (value / denominator) if denominator else 0
+            )
+            return counts
+
         issue_plot_df = issue_df.copy()
         if not issue_plot_df.empty:
             issue_plot_df["decision_date"] = pd.to_datetime(issue_plot_df["decision_date"]).dt.date
@@ -1089,79 +1141,221 @@ def main():
                 & (non_discretionary_plot_df["decision_date"] <= end_date)
             ].copy()
 
-        if not issue_plot_df.empty or not non_discretionary_plot_df.empty:
-            issue_chart_col1, issue_chart_col2 = st.columns(2)
+        issue_view = st.segmented_control(
+            "Issue View",
+            options=["All Issues", "Fintiv Only"],
+            default="All Issues",
+            key="issue_view",
+        )
 
-            with issue_chart_col1:
-                if not issue_plot_df.empty:
-                    issue_counts = build_issue_counts(issue_plot_df)
-                    issue_fig = px.bar(
-                        issue_counts,
-                        x="percentage",
-                        y="issue",
-                        orientation="h",
-                        color="issue",
-                        labels={
-                            "percentage": "Percent of Patent Owner Briefs",
-                            "issue": "",
-                        },
-                        color_discrete_map=issue_color_map,
+        if issue_view == "All Issues":
+            if not issue_plot_df.empty or not non_discretionary_plot_df.empty:
+                issue_chart_col1, issue_chart_col2 = st.columns(2)
+
+                with issue_chart_col1:
+                    if not issue_plot_df.empty:
+                        issue_counts = build_issue_counts(issue_plot_df)
+                        issue_fig = px.bar(
+                            issue_counts,
+                            x="percentage",
+                            y="issue",
+                            orientation="h",
+                            color="issue",
+                            labels={
+                                "percentage": "Percent of Patent Owner Briefs",
+                                "issue": "",
+                            },
+                            color_discrete_map=issue_color_map,
+                        )
+                        issue_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
+                        issue_fig.update_layout(
+                            xaxis_title="Percent of Patent Owner Briefs",
+                            yaxis_title="",
+                            showlegend=False,
+                            yaxis=dict(
+                                categoryorder="array",
+                                categoryarray=list(reversed(list(issue_labels.values()))),
+                            ),
+                        )
+                        issue_fig.update_xaxes(tickformat=".0%")
+                        dd_title_col, dd_help_col = st.columns([20, 1])
+                        with dd_title_col:
+                            st.markdown(
+                                (
+                                    f'<div class="issue-chart-title">'
+                                    f'Issue Breakdown in Discretionary Denial Briefs ({discretionary_period_label})'
+                                    f"</div>"
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                        with dd_help_col:
+                            st.markdown("&nbsp;", unsafe_allow_html=True)
+                        st.plotly_chart(issue_fig, use_container_width=True)
+                    else:
+                        st.info("No analyzed discretionary-denial briefs are available in the selected period.")
+
+                with issue_chart_col2:
+                    if not non_discretionary_plot_df.empty:
+                        non_discretionary_counts = build_issue_counts(non_discretionary_plot_df)
+                        non_discretionary_fig = px.bar(
+                            non_discretionary_counts,
+                            x="percentage",
+                            y="issue",
+                            orientation="h",
+                            color="issue",
+                            labels={
+                                "percentage": "Percent of Analyzed Briefs",
+                                "issue": "",
+                            },
+                            color_discrete_map=issue_color_map,
+                        )
+                        non_discretionary_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
+                        non_discretionary_fig.update_layout(
+                            xaxis_title="Percent of Analyzed Briefs",
+                            yaxis_title="",
+                            showlegend=False,
+                            yaxis=dict(
+                                categoryorder="array",
+                                categoryarray=list(reversed(list(issue_labels.values()))),
+                            ),
+                        )
+                        non_discretionary_fig.update_xaxes(tickformat=".0%")
+                        title_col, help_col = st.columns([20, 1])
+                        with title_col:
+                            st.markdown(
+                                (
+                                    f'<div class="issue-chart-title">'
+                                    f'Issue Breakdown in Non-DD Proceedings ({discretionary_period_label})'
+                                    f"</div>"
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                        with help_col:
+                            st.markdown("&nbsp;", unsafe_allow_html=True)
+                            st.caption(
+                                "",
+                                help=(
+                                    "Non-DD Proceedings refers to petitions that did not ultimately result in "
+                                    "discretionary denial, but in which the patent owner submitted a request for "
+                                    "discretionary denial."
+                                ),
+                            )
+                        st.plotly_chart(non_discretionary_fig, use_container_width=True)
+                    else:
+                        st.info("No analyzed non-discretionary briefs are available in the selected period.")
+
+                if not issue_plot_df.empty and not non_discretionary_plot_df.empty:
+                    comparison_table = (
+                        build_issue_counts(issue_plot_df)
+                        .rename(columns={"count": "dd_count", "percentage": "dd_percentage"})
+                        .merge(
+                            build_issue_counts(non_discretionary_plot_df).rename(
+                                columns={
+                                    "count": "non_dd_count",
+                                    "percentage": "non_dd_percentage",
+                                }
+                            ),
+                            on="issue",
+                            how="outer",
+                        )
+                        .fillna(0)
                     )
-                    issue_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
-                    issue_fig.update_layout(
-                        xaxis_title="Percent of Patent Owner Briefs",
+                    comparison_table["difference_pp"] = (
+                        (comparison_table["dd_percentage"] - comparison_table["non_dd_percentage"]) * 100
+                    )
+                    comparison_table["DD %"] = comparison_table["dd_percentage"].map(lambda value: f"{value:.1%}")
+                    comparison_table["Non-DD %"] = comparison_table["non_dd_percentage"].map(
+                        lambda value: f"{value:.1%}"
+                    )
+                    comparison_table["Difference (pp)"] = comparison_table["difference_pp"].map(
+                        lambda value: f"{value:+.1f}"
+                    )
+                    comparison_table = comparison_table[
+                        ["issue", "DD %", "Non-DD %", "Difference (pp)"]
+                    ].rename(columns={"issue": "Issue"})
+                    st.dataframe(
+                        comparison_table,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+        else:
+            dd_fintiv_counts = build_fintiv_counts(issue_plot_df)
+            non_dd_fintiv_counts = build_fintiv_counts(non_discretionary_plot_df)
+
+            fintiv_chart_col1, fintiv_chart_col2 = st.columns(2)
+
+            with fintiv_chart_col1:
+                if not dd_fintiv_counts.empty:
+                    dd_fintiv_fig = px.bar(
+                        dd_fintiv_counts,
+                        x="percentage",
+                        y="factor",
+                        orientation="h",
+                        color="factor",
+                        labels={
+                            "percentage": "Percent of Parallel-Litigation Briefs",
+                            "factor": "",
+                        },
+                        color_discrete_map=fintiv_color_map,
+                    )
+                    dd_fintiv_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
+                    dd_fintiv_fig.update_layout(
+                        xaxis_title="Percent of Parallel-Litigation Briefs",
                         yaxis_title="",
                         showlegend=False,
                         yaxis=dict(
                             categoryorder="array",
-                            categoryarray=list(reversed(list(issue_labels.values()))),
+                            categoryarray=list(reversed(list(fintiv_labels.values()))),
                         ),
                     )
-                    issue_fig.update_xaxes(tickformat=".0%")
-                    st.markdown(
-                        (
-                            f'<div class="issue-chart-title">'
-                            f'Issue Breakdown in Discretionary Denial Briefs ({discretionary_period_label})'
-                            f"</div>"
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    st.plotly_chart(issue_fig, use_container_width=True)
+                    dd_fintiv_fig.update_xaxes(tickformat=".0%")
+                    dd_fintiv_title_col, dd_fintiv_help_col = st.columns([20, 1])
+                    with dd_fintiv_title_col:
+                        st.markdown(
+                            (
+                                f'<div class="issue-chart-title">'
+                                f'Fintiv Factors in Discretionary Denial Briefs ({discretionary_period_label})'
+                                f"</div>"
+                            ),
+                            unsafe_allow_html=True,
+                        )
+                    with dd_fintiv_help_col:
+                        st.markdown("&nbsp;", unsafe_allow_html=True)
+                    st.plotly_chart(dd_fintiv_fig, use_container_width=True)
                 else:
-                    st.info("No analyzed discretionary-denial briefs are available in the selected period.")
+                    st.info("No discretionary-denial parallel-litigation briefs are available in the selected period.")
 
-            with issue_chart_col2:
-                if not non_discretionary_plot_df.empty:
-                    non_discretionary_counts = build_issue_counts(non_discretionary_plot_df)
-                    non_discretionary_fig = px.bar(
-                        non_discretionary_counts,
+            with fintiv_chart_col2:
+                if not non_dd_fintiv_counts.empty:
+                    non_dd_fintiv_fig = px.bar(
+                        non_dd_fintiv_counts,
                         x="percentage",
-                        y="issue",
+                        y="factor",
                         orientation="h",
-                        color="issue",
+                        color="factor",
                         labels={
-                            "percentage": "Percent of Analyzed Briefs",
-                            "issue": "",
+                            "percentage": "Percent of Parallel-Litigation Briefs",
+                            "factor": "",
                         },
-                        color_discrete_map=issue_color_map,
+                        color_discrete_map=fintiv_color_map,
                     )
-                    non_discretionary_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
-                    non_discretionary_fig.update_layout(
-                        xaxis_title="Percent of Analyzed Briefs",
+                    non_dd_fintiv_fig.update_traces(hovertemplate="%{x:.0%}<extra></extra>")
+                    non_dd_fintiv_fig.update_layout(
+                        xaxis_title="Percent of Parallel-Litigation Briefs",
                         yaxis_title="",
                         showlegend=False,
                         yaxis=dict(
                             categoryorder="array",
-                            categoryarray=list(reversed(list(issue_labels.values()))),
+                            categoryarray=list(reversed(list(fintiv_labels.values()))),
                         ),
                     )
-                    non_discretionary_fig.update_xaxes(tickformat=".0%")
+                    non_dd_fintiv_fig.update_xaxes(tickformat=".0%")
                     title_col, help_col = st.columns([20, 1])
                     with title_col:
                         st.markdown(
                             (
                                 f'<div class="issue-chart-title">'
-                                f'Issue Breakdown in Non-DD Proceedings ({discretionary_period_label})'
+                                f'Fintiv Factors in Non-DD Proceedings ({discretionary_period_label})'
                                 f"</div>"
                             ),
                             unsafe_allow_html=True,
@@ -1176,44 +1370,36 @@ def main():
                                 "discretionary denial."
                             ),
                         )
-                    st.plotly_chart(non_discretionary_fig, use_container_width=True)
+                    st.plotly_chart(non_dd_fintiv_fig, use_container_width=True)
                 else:
-                    st.info("No analyzed non-discretionary briefs are available in the selected period.")
+                    st.info("No non-DD parallel-litigation briefs are available in the selected period.")
 
-            if not issue_plot_df.empty and not non_discretionary_plot_df.empty:
-                comparison_table = (
-                    build_issue_counts(issue_plot_df)
-                    .rename(columns={"count": "dd_count", "percentage": "dd_percentage"})
+            if not dd_fintiv_counts.empty and not non_dd_fintiv_counts.empty:
+                fintiv_table = (
+                    dd_fintiv_counts.rename(columns={"count": "dd_count", "percentage": "dd_percentage"})
                     .merge(
-                        build_issue_counts(non_discretionary_plot_df).rename(
-                            columns={
-                                "count": "non_dd_count",
-                                "percentage": "non_dd_percentage",
-                            }
+                        non_dd_fintiv_counts.rename(
+                            columns={"count": "non_dd_count", "percentage": "non_dd_percentage"}
                         ),
-                        on="issue",
+                        on="factor",
                         how="outer",
                     )
                     .fillna(0)
                 )
-                comparison_table["difference_pp"] = (
-                    (comparison_table["dd_percentage"] - comparison_table["non_dd_percentage"]) * 100
+                fintiv_table["difference_pp"] = (
+                    (fintiv_table["dd_percentage"] - fintiv_table["non_dd_percentage"]) * 100
                 )
-                comparison_table["DD %"] = comparison_table["dd_percentage"].map(lambda value: f"{value:.1%}")
-                comparison_table["Non-DD %"] = comparison_table["non_dd_percentage"].map(
+                fintiv_table["DD %"] = fintiv_table["dd_percentage"].map(lambda value: f"{value:.1%}")
+                fintiv_table["Non-DD %"] = fintiv_table["non_dd_percentage"].map(
                     lambda value: f"{value:.1%}"
                 )
-                comparison_table["Difference (pp)"] = comparison_table["difference_pp"].map(
+                fintiv_table["Difference (pp)"] = fintiv_table["difference_pp"].map(
                     lambda value: f"{value:+.1f}"
                 )
-                comparison_table = comparison_table[
-                    ["issue", "DD %", "Non-DD %", "Difference (pp)"]
-                ].rename(columns={"issue": "Issue"})
-                st.dataframe(
-                    comparison_table,
-                    use_container_width=True,
-                    hide_index=True,
+                fintiv_table = fintiv_table[["factor", "DD %", "Non-DD %", "Difference (pp)"]].rename(
+                    columns={"factor": "Fintiv Factor"}
                 )
+                st.dataframe(fintiv_table, use_container_width=True, hide_index=True)
 
         tech_center_df = discretionary_df[
             discretionary_df["patent_owner_technology_center_number"].notna()

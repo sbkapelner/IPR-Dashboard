@@ -21,7 +21,7 @@ except ImportError as exc:
 
 
 MODEL_NAME = "gpt-4.1-mini"
-PROMPT_VERSION = "2026-04-17-v1"
+PROMPT_VERSION = "2026-04-30-v1"
 TABLE_NAME = "issue_analysis_non_discretionary"
 DATE_FLOOR = "2025-03-01"
 
@@ -81,6 +81,12 @@ def ensure_schema(conn):
                 serial_petitions_314a BOOLEAN,
                 settled_expectations_314a BOOLEAN,
                 conflicting_positions_314a BOOLEAN,
+                fintiv_factor_1 BOOLEAN,
+                fintiv_factor_2 BOOLEAN,
+                fintiv_factor_3 BOOLEAN,
+                fintiv_factor_4 BOOLEAN,
+                fintiv_factor_5 BOOLEAN,
+                fintiv_factor_6 BOOLEAN,
                 previous_art_or_arguments_325d BOOLEAN,
                 prior_office_presentation_325d BOOLEAN,
                 material_error_325d BOOLEAN,
@@ -97,6 +103,13 @@ def ensure_schema(conn):
             ADD COLUMN IF NOT EXISTS conflicting_positions_314a BOOLEAN
             """
         )
+        for factor in range(1, 7):
+            cur.execute(
+                f"""
+                ALTER TABLE {TABLE_NAME}
+                ADD COLUMN IF NOT EXISTS fintiv_factor_{factor} BOOLEAN
+                """
+            )
     conn.commit()
 
 
@@ -167,6 +180,12 @@ def upsert_record(conn, record):
                 serial_petitions_314a,
                 settled_expectations_314a,
                 conflicting_positions_314a,
+                fintiv_factor_1,
+                fintiv_factor_2,
+                fintiv_factor_3,
+                fintiv_factor_4,
+                fintiv_factor_5,
+                fintiv_factor_6,
                 previous_art_or_arguments_325d,
                 prior_office_presentation_325d,
                 material_error_325d,
@@ -192,6 +211,12 @@ def upsert_record(conn, record):
                 %(serial_petitions_314a)s,
                 %(settled_expectations_314a)s,
                 %(conflicting_positions_314a)s,
+                %(fintiv_factor_1)s,
+                %(fintiv_factor_2)s,
+                %(fintiv_factor_3)s,
+                %(fintiv_factor_4)s,
+                %(fintiv_factor_5)s,
+                %(fintiv_factor_6)s,
                 %(previous_art_or_arguments_325d)s,
                 %(prior_office_presentation_325d)s,
                 %(material_error_325d)s,
@@ -217,6 +242,12 @@ def upsert_record(conn, record):
                 serial_petitions_314a = EXCLUDED.serial_petitions_314a,
                 settled_expectations_314a = EXCLUDED.settled_expectations_314a,
                 conflicting_positions_314a = EXCLUDED.conflicting_positions_314a,
+                fintiv_factor_1 = EXCLUDED.fintiv_factor_1,
+                fintiv_factor_2 = EXCLUDED.fintiv_factor_2,
+                fintiv_factor_3 = EXCLUDED.fintiv_factor_3,
+                fintiv_factor_4 = EXCLUDED.fintiv_factor_4,
+                fintiv_factor_5 = EXCLUDED.fintiv_factor_5,
+                fintiv_factor_6 = EXCLUDED.fintiv_factor_6,
                 previous_art_or_arguments_325d = EXCLUDED.previous_art_or_arguments_325d,
                 prior_office_presentation_325d = EXCLUDED.prior_office_presentation_325d,
                 material_error_325d = EXCLUDED.material_error_325d,
@@ -501,6 +532,13 @@ Return valid JSON only.
 
 Definitions:
 - 314a_parallel_litigation: true only if the brief substantively argues denial because parallel district court or ITC litigation will resolve overlapping issues sooner or more efficiently. Strong indicators include Fintiv, trial timing, stay, overlap of issues/claims/grounds, investment in parallel litigation, or same parties.
+- If 314a_parallel_litigation is true, also classify which Fintiv factors are substantively raised:
+  - fintiv_factor_1: whether there is or is not a stay, or evidence one may be granted
+  - fintiv_factor_2: proximity of the court's trial date to the Board's projected final written decision deadline
+  - fintiv_factor_3: investment in the parallel proceeding by the court and parties
+  - fintiv_factor_4: overlap between issues raised in the petition and in the parallel proceeding
+  - fintiv_factor_5: whether the petitioner and the defendant in the parallel proceeding are the same party
+  - fintiv_factor_6: other circumstances affecting discretion, including merits or broader fairness considerations
 - 314a_serial_petitions: true only if the brief substantively argues repeat, follow-on, coordinated, joined, or multiple PTAB challenges by the same petitioner, real party in interest, privy, or related party against the same patent. Strong indicators include General Plastic, follow-on petitioning, multiple petitions, joinder tactics, or coordinated petitioning. Do not mark this true merely because the brief mentions related petitions or related patents as background facts.
 - 314a_settled_expectations: true only if the brief argues the patent's age, long period in force, reliance interests, investment-backed expectations, or delayed challenge supports denial. Patent age alone is not enough unless tied to a settled-expectations or delayed-challenge argument.
 - 314a_conflicting_positions: true only if the brief substantively argues that the petitioner took conflicting claim-construction or closely related legal positions across forums or proceedings. Strong indicators include Revvo, Tesla, "fast and loose," plain-and-ordinary meaning here but different constructions elsewhere, or indefiniteness in one forum and a definite/plain-meaning position in another.
@@ -520,6 +558,12 @@ For 325(d), also provide:
 Return this JSON shape exactly:
 {
   "314a_parallel_litigation": {...},
+  "fintiv_factor_1": {...},
+  "fintiv_factor_2": {...},
+  "fintiv_factor_3": {...},
+  "fintiv_factor_4": {...},
+  "fintiv_factor_5": {...},
+  "fintiv_factor_6": {...},
   "314a_serial_petitions": {...},
   "314a_settled_expectations": {...},
   "314a_conflicting_positions": {...},
@@ -656,6 +700,12 @@ def build_status_record(
         "serial_petitions_314a": None,
         "settled_expectations_314a": None,
         "conflicting_positions_314a": None,
+        "fintiv_factor_1": None,
+        "fintiv_factor_2": None,
+        "fintiv_factor_3": None,
+        "fintiv_factor_4": None,
+        "fintiv_factor_5": None,
+        "fintiv_factor_6": None,
         "previous_art_or_arguments_325d": None,
         "prior_office_presentation_325d": None,
         "material_error_325d": None,
@@ -694,6 +744,12 @@ def build_analysis_record(
         "serial_petitions_314a": analysis["314a_serial_petitions"]["applies"],
         "settled_expectations_314a": analysis["314a_settled_expectations"]["applies"],
         "conflicting_positions_314a": analysis["314a_conflicting_positions"]["applies"],
+        "fintiv_factor_1": analysis["fintiv_factor_1"]["applies"],
+        "fintiv_factor_2": analysis["fintiv_factor_2"]["applies"],
+        "fintiv_factor_3": analysis["fintiv_factor_3"]["applies"],
+        "fintiv_factor_4": analysis["fintiv_factor_4"]["applies"],
+        "fintiv_factor_5": analysis["fintiv_factor_5"]["applies"],
+        "fintiv_factor_6": analysis["fintiv_factor_6"]["applies"],
         "previous_art_or_arguments_325d": category_325d["applies"],
         "prior_office_presentation_325d": category_325d["prior_office_presentation_discussed"],
         "material_error_325d": category_325d["material_error_discussed"],
